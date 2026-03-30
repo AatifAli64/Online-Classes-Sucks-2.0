@@ -11,6 +11,8 @@ import queue
 import requests
 from scipy.signal import resample_poly
 
+pyautogui.FAILSAFE = False  # Prevent crash when mouse is near screen corners
+
 import numpy as np
 import warnings
 import soundcard as sc
@@ -30,10 +32,10 @@ load_dotenv()
 
 # ================= CONFIGURATION =================
 
-CHROME_PROFILE_PATH = os.getenv("CHROME_PROFILE_PATH", r"chorme default profile path")
+CHROME_PROFILE_PATH = os.getenv("CHROME_PROFILE_PATH", r"Your class chrome profile path")
 PROFILE_DIRECTORY = os.getenv("PROFILE_DIRECTORY", "Default")
 
-KAGGLE_SERVER_URL = os.getenv("KAGGLE_SERVER_URL", "default kaggle server url")
+KAGGLE_SERVER_URL = os.getenv("KAGGLE_SERVER_URL", "http://localhost") # Fallback
 
 CHECK_INTERVAL_SECONDS = 60 
 
@@ -82,7 +84,7 @@ def network_sender_worker(driver, platform):
                 if response.status_code == 200:
                     result = response.json()
                     text = result.get("text", "")
-                    name_found = result.get("name_found", False)
+                    name_found = result.get("Your name found", False)
                     
                     if text:
                         print(f"[{ts_display}] 🗣️ {text}  (GPU Speed: {time.time()-start_time:.2f}s)")
@@ -102,7 +104,7 @@ def network_sender_worker(driver, platform):
             except requests.exceptions.Timeout:
                 print(f"[{ts_display}] [Network Timeout] Kaggle server took too long to respond.")
             except requests.exceptions.ConnectionError:
-                print(f"[{ts_display}] [Network Error] Could not connect to {KAGGLE_SERVER_URL}. Is ngrok running on Kaggle?")
+                print(f"[{ts_display}] [Network Error] Could not connect to {KAGGLE_SERVER_URL}. Is ngrok running?")
                 
         except BaseException as e:
             print(f"[Sender Error] {e}")
@@ -110,7 +112,6 @@ def network_sender_worker(driver, platform):
             audio_queue.task_done()
             
     print("[Sender Thread] Exiting properly.")
-
 
 def recorder_worker():
     global STOP_LISTENING
@@ -131,7 +132,6 @@ def recorder_worker():
 
                     if data is not None and hasattr(data, 'shape') and data.size > 0:
                         ts_display = datetime.now().strftime("%H:%M:%S")
-
                         data_24k = resample_poly(data, up=1, down=2).astype(np.float32)
                         audio_queue.put((data_24k, ts_display))
                     else:
@@ -151,8 +151,6 @@ def recorder_worker():
 def send_google_meet_message(driver, message):
     try:
         print("[+] Attempting to send message in Google Meet...")
-        from selenium.webdriver.common.action_chains import ActionChains
-        
         selectors = [
             "//textarea[contains(@aria-label, 'Send a message')]",
             "//input[contains(@aria-label, 'Send a message')]",
@@ -160,7 +158,6 @@ def send_google_meet_message(driver, message):
         ]
         
         textarea = None
-        
         for sel in selectors:
             try:
                 t = driver.find_element(By.XPATH, sel)
@@ -173,7 +170,7 @@ def send_google_meet_message(driver, message):
         if not textarea:
             try:
                 chat_btn = driver.find_element(By.XPATH, "//button[contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'chat')]")
-                chat_btn.click()
+                driver.execute_script("arguments[0].click();", chat_btn)
                 print("Clicked Google Meet chat button. Waiting for panel to slide open...")
                 time.sleep(4)
             except:
@@ -189,15 +186,9 @@ def send_google_meet_message(driver, message):
                     pass
         
         if textarea:
-            textarea.click()
+            textarea.send_keys(message)
             time.sleep(0.5)
-            
-            actions = ActionChains(driver)
-            actions.send_keys(message)
-            actions.perform()
-            
-            time.sleep(0.5)
-            ActionChains(driver).send_keys(Keys.ENTER).perform()
+            textarea.send_keys(Keys.ENTER)
             print("[+] Message sent in Google Meet!")
         else:
             print("[-] Could not locate the Google Meet chat input box.")
@@ -208,58 +199,63 @@ def send_google_meet_message(driver, message):
 def send_teams_message(driver, message):
     try:
         print("[+] Attempting to send message in Microsoft Teams...")
-        from selenium.webdriver.common.action_chains import ActionChains
-        
         selectors = [
             "//div[@role='textbox' and contains(@aria-label, 'Type a new message')]",
             "//div[@contenteditable='true' and contains(@data-tid, 'chat-input')]",
-            "//div[contains(@aria-label, 'message') and @role='textbox']"
+            "//div[contains(@aria-label, 'message') and @role='textbox']",
+            "//div[@role='textbox' and @contenteditable='true']",
+            "//div[contains(@class, 'compose')]//div[@contenteditable='true']",
+            "//p[contains(@data-placeholder, 'Type a new message')]",
         ]
         
-        textbox = None
-        
-        for sel in selectors:
-            try:
-                t = driver.find_element(By.XPATH, sel)
-                if t.is_displayed():
-                    textbox = t
-                    break
-            except:
-                pass
-                
-        if not textbox:
-            try:
-                chat_btn = driver.find_element(By.ID, "chat-button")
-                chat_btn.click()
-            except:
-                try:
-                    chat_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Chat')]")
-                    chat_btn.click()
-                except:
-                    print("Chat button not found in Teams.")
-            
-            print("Clicked Microsoft Teams chat button. Waiting for panel to render...")
-            time.sleep(5)
-            
+        def find_textbox():
             for sel in selectors:
                 try:
                     t = driver.find_element(By.XPATH, sel)
                     if t.is_displayed():
-                        textbox = t
-                        break
+                        return t
                 except:
                     pass
+            return None
+        
+        textbox = find_textbox()
+                
+        if not textbox:
+            # Try opening chat panel
+            try:
+                chat_btn = driver.find_element(By.ID, "chat-button")
+                driver.execute_script("arguments[0].click();", chat_btn)
+            except:
+                try:
+                    chat_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Chat')]")
+                    driver.execute_script("arguments[0].click();", chat_btn)
+                except:
+                    # Last resort: try any button with "chat" in its text
+                    try:
+                        btns = driver.find_elements(By.TAG_NAME, "button")
+                        for b in btns:
+                            if "chat" in (b.text or "").lower() and b.is_displayed():
+                                driver.execute_script("arguments[0].click();", b)
+                                break
+                    except:
+                        print("Chat button not found in Teams.")
+            
+            print("Clicked Microsoft Teams chat button. Waiting for panel to render...")
+            time.sleep(8)
+            
+            for attempt in range(3):
+                textbox = find_textbox()
+                if textbox:
+                    break
+                print(f"  Chat input not found yet, retrying... ({attempt + 1}/3)")
+                time.sleep(3)
         
         if textbox:
             textbox.click()
             time.sleep(0.5)
-            
-            actions = ActionChains(driver)
-            actions.send_keys(message)
-            actions.perform()
-            
+            textbox.send_keys(message)
             time.sleep(1)
-            ActionChains(driver).send_keys(Keys.ENTER).perform()
+            textbox.send_keys(Keys.ENTER)
             print("[+] Message sent in Teams!")
         else:
             print("[-] Could not locate Microsoft Teams chat input box.")
@@ -291,7 +287,6 @@ def get_current_class_info():
             }
     return None
 
-
 def setup_driver():
     chrome_options = Options()
     
@@ -303,13 +298,13 @@ def setup_driver():
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
     chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-features=ExternalProtocolDialog")
     
     prefs = {
         "profile.default_content_setting_values.media_stream_mic": 1,
         "profile.default_content_setting_values.media_stream_camera": 1,
         "profile.default_content_setting_values.notifications": 2,
-        
-        "protocol_handler.excluded_schemes": {"msteams": False},
+        "protocol_handler.excluded_schemes": {"msteams": True}, 
         "custom_handlers.enabled": False
     }
     chrome_options.add_experimental_option("prefs", prefs)
@@ -352,10 +347,9 @@ def check_if_recent(text, link_url):
         
         now = datetime.now()
         post_dt = datetime.combine(now.date(), parsed_time)
-        
         diff_mins = (now - post_dt).total_seconds() / 60.0
         
-        if -10 <= diff_mins <= 20: 
+        if -10 <= diff_mins <= 100:
             return True
         else:
             print(f"[-] Link is too old or from a past class. Ignoring.")
@@ -417,7 +411,7 @@ def join_google_meet(driver, url):
         
         print("Finding Join button...")
         join_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Join now') or contains(text(), 'Ask to join')]")))
-        join_button.click()
+        driver.execute_script("arguments[0].click();", join_button)
         
         print("Successfully clicked the Join button!")
         return True
@@ -432,56 +426,46 @@ def join_teams_meeting(driver, url):
     guest_name = os.getenv("GUEST_NAME", "Guest User")
     
     try:
-        wait = WebDriverWait(driver, 20)
         actions = ActionChains(driver)
         
         print("Waiting for 'Open Microsoft Teams' OS popup...")
         time.sleep(3)
-        
         print("Simulating hardware ESCAPE key to dismiss the popup...")
         pyautogui.press('esc')
         time.sleep(2)
         
-        try:
-            print("Looking for 'Continue on this browser' button...")
-            time.sleep(3) 
-            
-            browser_btn = None
-            
-            try:
-                browser_btn = driver.find_element(By.ID, "joinOnWeb")
-            except:
-                pass
-                
-            if not browser_btn:
-                try:
-                    buttons = driver.find_elements(By.TAG_NAME, "button")
-                    for btn in buttons:
-                        if "Continue on this browser" in btn.text:
-                            browser_btn = btn
-                            break
-                except:
-                    pass
-            
-            if browser_btn:
-                print("Found the button! Attempting to click...")
-                try:
-                    browser_btn.click()
-                except:
-                    print("Standard click blocked, attempting Javascript click.")
-                    driver.execute_script("arguments[0].click();", browser_btn)
-                print("Selected 'Continue on this browser'.")
-            else:
-                print("Critical: Could not find the 'Continue on this browser' button anywhere in the DOM.")
-                
-        except Exception as e:
-            print(f"Error during 'Continue on this browser' interaction: {e}")
-            
-        print("Waiting for Teams pre-join screen (this can take up to 25 seconds for the web app)...")
-        time.sleep(25) 
+        print("Looking for 'Continue on this browser' button...")
+        time.sleep(3)
+        browser_btn = None
         
         try:
-            print("Checking if Guest Name input is required...")
+            browser_btn = driver.find_element(By.ID, "joinOnWeb")
+        except: pass
+        
+        if not browser_btn:
+            try:
+                buttons = driver.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    if "Continue on this browser" in btn.text:
+                        browser_btn = btn
+                        break
+            except: pass
+        
+        if browser_btn:
+            print("Found the button! Attempting to click...")
+            try:
+                browser_btn.click()
+            except:
+                driver.execute_script("arguments[0].click();", browser_btn)
+            print("Selected 'Continue on this browser'.")
+        else:
+            print("[!] Could not find 'Continue on this browser'. Proceeding anyway...")
+        
+        print("Waiting for Teams pre-join screen (this can take up to 25 seconds)...")
+        time.sleep(25)
+        
+        print("Checking if Guest Name input is required...")
+        try:
             inputs = driver.find_elements(By.TAG_NAME, "input")
             for inp in inputs:
                 placeholder = inp.get_attribute("placeholder")
@@ -491,15 +475,14 @@ def join_teams_meeting(driver, url):
                     inp.clear()
                     inp.send_keys(guest_name)
                     time.sleep(1)
-                    break 
-        except Exception as e:
+                    break
+        except Exception:
             pass
-
+        
         try:
             driver.find_element(By.TAG_NAME, "body").click()
-        except:
-            pass
-            
+        except: pass
+        
         print("Turning off Microphone (Ctrl+Shift+M)...")
         actions.key_down(Keys.CONTROL).key_down(Keys.SHIFT).send_keys('m').key_up(Keys.SHIFT).key_up(Keys.CONTROL).perform()
         time.sleep(3)
@@ -508,30 +491,26 @@ def join_teams_meeting(driver, url):
         actions.key_down(Keys.CONTROL).key_down(Keys.SHIFT).send_keys('o').key_up(Keys.SHIFT).key_up(Keys.CONTROL).perform()
         time.sleep(3)
         
+        print("Finding Join button...")
+        join_btn = None
         try:
-            print("Finding Join button...")
-            join_btn = None
+            buttons = driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if "Join" in btn.text or "Join now" in btn.text:
+                    join_btn = btn
+                    break
+        except: pass
+        
+        if join_btn:
             try:
-                buttons = driver.find_elements(By.TAG_NAME, "button")
-                for btn in buttons:
-                    if "Join" in btn.text or "Join now" in btn.text:
-                        join_btn = btn
-                        break
+                join_btn.click()
             except:
-                pass
-                
-            if join_btn:
-                try:
-                    join_btn.click()
-                except:
-                    driver.execute_script("arguments[0].click();", join_btn)
-                print("Successfully clicked the Teams Join button!")
-            else:
-                print("Could not locate the 'Join now' button anywhere in the DOM.")
-        except Exception as e:
-            print(f"Error finding Join button: {e}")
-            
-        print("Teams page loaded. The script will keep the browser open.")
+                driver.execute_script("arguments[0].click();", join_btn)
+            print("Successfully clicked the Teams Join button!")
+        else:
+            print("[!] Could not find Join button.")
+        
+        print("Teams page loaded. Keeping browser open until class ends.")
         return True
         
     except Exception as e:
@@ -588,7 +567,6 @@ def main():
                     links = find_meeting_links(driver, page_text)
                     
                     links_to_test = []
-                    found_new = False
                     
                     if first_run:
                         print(f"[*] Initial scan complete. Found {len(links)} existing links on the wall.")
@@ -597,18 +575,13 @@ def main():
                             
                         if links:
                             print("\n[*] Validating links from the initial scan...")
-                            for first_link in links:
-                                if check_if_recent(page_text, first_link):
-                                    print(f"[+] Link matches day & time constraint (<=20 mins check). Testing: {first_link}")
-                                    links_to_test.append(first_link)
-                                    break 
-                                else:
-                                    pass 
+                            first_link = links[0]
+                            if check_if_recent(page_text, first_link):
+                                print(f"[+] Link matches day & time constraint. Testing: {first_link}")
+                                links_to_test.append(first_link)
+                            else:
+                                print("[-] Most recent link is old. Waiting for a new post...")
                             
-                            if not links_to_test:
-                                print("[-] All existing links on the wall are old. Ignoring them.")
-                            
-                        print("[*] Now actively monitoring for NEW posts...")
                         first_run = False
                     else:
                         for link in links:
@@ -617,11 +590,9 @@ def main():
                                 processed_links.add(link)
                                 if check_if_recent(page_text, link):
                                     links_to_test.append(link)
-                                    found_new = True
                                 else:
-                                    print(f"[-] Ignored {link} as it violates the 20-minute/same-day constraint.")
+                                    print(f"[-] Ignored {link} as it violates constraints.")
                     
-                    # Test discovered or recent links
                     for link in links_to_test:
                         decoded_link = urllib.parse.unquote(link)
                         join_success = False
@@ -650,7 +621,7 @@ def main():
                             t_waiter.start()
                             
                             while datetime.now().time() <= current_class["end_time"]:
-                                time.sleep(2)
+                                time.sleep(5)
                                 
                             STOP_LISTENING = True
                             class_ended_flag = True
@@ -671,6 +642,7 @@ def main():
                 print("Closing browser for this class session...")
                 try:
                     STOP_LISTENING = True
+                    time.sleep(2) 
                     driver.quit()
                 except:
                     pass
