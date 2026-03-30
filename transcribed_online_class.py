@@ -349,7 +349,7 @@ def check_if_recent(text, link_url):
         post_dt = datetime.combine(now.date(), parsed_time)
         diff_mins = (now - post_dt).total_seconds() / 60.0
         
-        if -10 <= diff_mins <= 100:
+        if -10 <= diff_mins <= 20:
             return True
         else:
             print(f"[-] Link is too old or from a past class. Ignoring.")
