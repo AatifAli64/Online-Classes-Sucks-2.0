@@ -1,0 +1,8 @@
+pyautogui
+requests
+scipy
+numpy
+SoundCard
+soundfile
+python-dotenv
+selenium

@@ -1,0 +1,1 @@
+!pip install -q fastapi uvicorn pyngrok soundfile python-multipart faster-whisper torch nest_asyncio librosa
